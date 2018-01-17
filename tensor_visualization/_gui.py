@@ -1,12 +1,19 @@
+'''
+only visualize() is exported
+'''
+
 import sys 
 
 from vispy import scene
 from vispy.color import get_colormap, ColorArray
 from vispy.visuals import transforms
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore
 
-from PyQt5.QtWidgets import QWidget, QPushButton, QTreeWidget, QTreeWidgetItem, QLabel, QRadioButton, QSpinBox
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QPushButton, QLabel, QRadioButton, QSpinBox
+from PyQt5.QtWidgets import QTreeWidgetItem, QTreeWidget
+from PyQt5.QtWidgets import QWidget, QFrame
 from PyQt5.QtWidgets import QBoxLayout, QHBoxLayout, QGridLayout
 
 from PyQt5.QtCore import Qt
@@ -14,24 +21,19 @@ from PyQt5.QtCore import Qt
 import numpy as np
 import numpy.random as rd
 
-# an observable
-class TensorData(object):
-    def __init__(self, tensor):
-        self.tensor = tensor
-        self.partitions = (1, 1, 1)
-        self.ranks = []
-        self.observers = []
+from ._tensor_rank import TensorData
 
-    def register(self, a_observer):
-        self.observers.append(a_observer)
 
-    # ValueError only if program error
-    def unregister(self, a_observer):
-        self.observers.remove(a_observer)
+class ScatterRankShowerUnit(scene.visuals.Markers):
+    def __init__(self, rank, orig_size):
+        ...
 
-    def update(self):
-        for observer in self.observers:
-            observer(self)
+
+def get_shower_unit(rank, orig_size, rank_viewmode):
+    if rank_viewmode == 'hybrid':
+        return ScatterRankShowerUnit(rank, orig_size)
+    else:
+        raise ValueError("{} not implemented".format(rank_viewmode))
 
 class CostumizedCanvas(scene.SceneCanvas):
     def __init__(self, *args, **kv):
@@ -47,42 +49,63 @@ class CostumizedCanvas(scene.SceneCanvas):
     def set_on_close_handler(self, handler):
         self.on_close_handler = handler
 
-class Context:
-    def __init__(self):
-        #self.canvas = scene.SceneCanvas(keys='interactive', size=(800, 600), show=True)
-        #self.canvas = scene.SceneCanvas(keys='interactive', show=True)
-        #self.canvas = scene.SceneCanvas(keys='interactive')
+
+class TensorDisplayContext(object):
+    def __init__(self, tensor_data):
         self.canvas = CostumizedCanvas(keys='interactive')
         self.view = self.canvas.central_widget.add_view()
         self.view.camera = 'turntable'
         self.canvas.central_widget.remove_widget(self.view)
         self.canvas.central_widget.add_widget(self.view)
+        tensor_data.register(self)
+
+        self.axis = scene.visuals.XYZAxis(parent=self.view.scene)
+        self.axis.transform = transforms.MatrixTransform()
+        self.axis.transform.translate((-1, -1, -1))
+        self.shower_units = []
+
+        self.rank_viewmode = "hybrid"
+
+    def _clear_all_shower_units(self):
+        for unit in self.shower_units:
+            unit.parent = None
+        self.shower_units = []
     
-    def show(self):
-        self.canvas.show()
+    def on_tensor_data_update(self, tensor_data):
+        self._clear_all_shower_units()
+        for l in range(tensor_data.partitions[0]):
+            for m in range(tensor_data.partitions[1]):
+                for n in range(tensor_data.partitions[2]):
+                    shower_unit = get_shower_unit(
+                              tensor_data.rank(l, m, n)
+                            , (5, 5, 5)
+                            , self.rank_viewmode
+                            )
+                    self.shower_units.append(shower_unit)
+                    self.view.add(shower_unit)
 
-_context = Context()
 
-class TensorRankViewSelector(QWidget):
+class TensorRankViewSelector(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('QFrame {border:1px solid;}')
 
         layout = QHBoxLayout(self)
-        #self.setLayout(layout)
 
-        self.point_cloud = QRadioButton('point cloud')
+        self.point_cloud = QRadioButton('Point Cloud')
         layout.addWidget(self.point_cloud)
 
-        self.pure_heat = QRadioButton('pure heat')
-        layout.addWidget(self.pure_heat)
+        self.pure_color = QRadioButton('Pure Color')
+        layout.addWidget(self.pure_color)
 
-        self.hybrid = QRadioButton('hybrid')
+        self.hybrid = QRadioButton('Hybrid')
         self.hybrid.setChecked(True)
         layout.addWidget(self.hybrid)
 
-class TensorRankShower(QWidget):
+class TensorRankShower(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('QFrame {border:1px solid;}')
 
         data_len_per_dim = 5
         layout = QBoxLayout(QBoxLayout.TopToBottom, self)
@@ -118,9 +141,10 @@ class TensorRankShower(QWidget):
 
         show_all_button.clicked.connect(toggle_expand)
 
-class XYZRangeSelector(QWidget):
+class XYZRangeSelector(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('QFrame {border:1px solid;}')
 
         layout = QGridLayout(self)
 
@@ -143,6 +167,9 @@ class XYZRangeSelector(QWidget):
             end_box = QSpinBox(self)
             end_box.setToolTip("end at")
             layout.addWidget(end_box, 4, m)
+
+        rerender_button = QPushButton('Rerender')
+        layout.addWidget(rerender_button, 5, 3)
             
 class Window(QWidget):
     def __init__(self):
@@ -163,10 +190,6 @@ class Window(QWidget):
         tensor_view_selector = TensorRankViewSelector()
         rightBox.addWidget(tensor_view_selector)
 
-        #button = QPushButton('Change View', self)
-        #button.setToolTip('Change View Port')
-        #rightBox.addWidget(button)
-
         xyzRangeSelector = XYZRangeSelector()
         rightBox.addWidget(xyzRangeSelector)
 
@@ -179,77 +202,19 @@ class Window(QWidget):
         if event.key() == Qt.Key_Escape:
             self.close()
 
-def add_scatter():
-    how_many_seg = 5
-    to_scale = 0.4
-    poss = []
-    for l in range(how_many_seg):
-        for m in range(how_many_seg):
-            for n in range(how_many_seg):
-                if l == m and l == n:
-                    for _ in range(10000):
-                        poss.append((
-                              (np.random.random() + l - how_many_seg/2) * to_scale
-                            , (np.random.random() + m - how_many_seg/2) * to_scale
-                            , (np.random.random() + n - how_many_seg/2) * to_scale
-                        ))
-                else:
-                    for _ in range(10):
-                        poss.append((
-                              (np.random.random() + l - how_many_seg/2) * to_scale
-                            , (np.random.random() + m - how_many_seg/2) * to_scale
-                            , (np.random.random() + n - how_many_seg/2) * to_scale
-                        ))
+class Context(object):
+    def __init__(self):
+        self.qt_app = QApplication([])
+        self.tensor_data = TansorData()
+        self.win = Window()
+        
 
-    poss = np.array(poss)
-    scatter = scene.visuals.Markers()
-    scatter.set_data(poss, edge_color=None, face_color=(1, 1, 1, 0.5), size=5)
-    _context.view.add(scatter)
-
-def add_scatter_one_by_one():
-    how_many_seg = 5
-    to_scale = 0.4
-    for l in range(how_many_seg):
-        for m in range(how_many_seg):
-            for n in range(how_many_seg):
-                scatter = scene.visuals.Markers()
-                poss = np.random.random(size=(10000, 3)) if l == m and l == n else np.random.random(size=(10, 3))
-                poss += (l, m, n)
-                poss -= how_many_seg/2
-                poss *= to_scale
-
-                scatter.set_data(poss, face_color=(1, 0, 0, 0.5) if l == m and l == n else (1, 1, 1, 0.5), size=5)
-                _context.view.add(scatter)
+_context = Context()
 
 
-def add_cubes():
-    cm = get_colormap('hot')
-    how_many_seg = 5
-    for l in range(how_many_seg):
-        for m in range(how_many_seg):
-            for n in range(how_many_seg):
-                cube_size = 0.15
-                how_much_red = np.random.random()
-                cube = scene.visuals.Sphere(
-                          radius=cube_size/2
-                        , method='latitude'
-                        , color=cm[np.random.random()]
-                        )
-                #cube = scene.visuals.Cube((cube_size, cube_size, cube_size),
-                        #color=ColorArray((how_much_red, 0, 0, 0.8)))#,
-                        #edge_color='k')
-                cube.transform = transforms.MatrixTransform()
-                to_translate = 0.4
-                cube.transform.translate((to_translate*(l-how_many_seg//2), to_translate*(m-how_many_seg//2), to_translate*(n-how_many_seg//2)))
-                _context.view.add(cube)
+def visualize(tensor):
+    _context.tensor_data.reset()
+    _context.tensor_data.setTensor(tensor)
+    _context.tensor_data.update()
 
-
-if __name__ == '__main__':
-    #add_scatter()
-    add_scatter_one_by_one()
-    qt_app = QtWidgets.QApplication(sys.argv)
-    ex = Window()
-    qt_app.exec_()
-
-    #add_cubes()
-    #_context.canvas.app.run()
+    _context.qt_app.exce_()

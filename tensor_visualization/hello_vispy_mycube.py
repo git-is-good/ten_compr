@@ -4,34 +4,18 @@ from vispy import scene
 from vispy.color import get_colormap, ColorArray
 from vispy.visuals import transforms
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore
 
-from PyQt5.QtWidgets import QWidget, QPushButton, QTreeWidget, QTreeWidgetItem, QLabel, QRadioButton, QSpinBox
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QPushButton, QLabel, QRadioButton, QSpinBox
+from PyQt5.QtWidgets import QTreeWidgetItem, QTreeWidget
+from PyQt5.QtWidgets import QWidget, QFrame
 from PyQt5.QtWidgets import QBoxLayout, QHBoxLayout, QGridLayout
 
 from PyQt5.QtCore import Qt
 
 import numpy as np
 import numpy.random as rd
-
-# an observable
-class TensorData(object):
-    def __init__(self, tensor):
-        self.tensor = tensor
-        self.partitions = (1, 1, 1)
-        self.ranks = []
-        self.observers = []
-
-    def register(self, a_observer):
-        self.observers.append(a_observer)
-
-    # ValueError only if program error
-    def unregister(self, a_observer):
-        self.observers.remove(a_observer)
-
-    def update(self):
-        for observer in self.observers:
-            observer(self)
 
 class CostumizedCanvas(scene.SceneCanvas):
     def __init__(self, *args, **kv):
@@ -63,26 +47,28 @@ class Context:
 
 _context = Context()
 
-class TensorRankViewSelector(QWidget):
+class TensorRankViewSelector(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('QFrame {border:1px solid;}')
 
         layout = QHBoxLayout(self)
         #self.setLayout(layout)
 
-        self.point_cloud = QRadioButton('point cloud')
+        self.point_cloud = QRadioButton('Point Cloud')
         layout.addWidget(self.point_cloud)
 
-        self.pure_heat = QRadioButton('pure heat')
-        layout.addWidget(self.pure_heat)
+        self.pure_color = QRadioButton('Pure Color')
+        layout.addWidget(self.pure_color)
 
-        self.hybrid = QRadioButton('hybrid')
+        self.hybrid = QRadioButton('Hybrid')
         self.hybrid.setChecked(True)
         layout.addWidget(self.hybrid)
 
-class TensorRankShower(QWidget):
+class TensorRankShower(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('QFrame {border:1px solid;}')
 
         data_len_per_dim = 5
         layout = QBoxLayout(QBoxLayout.TopToBottom, self)
@@ -118,9 +104,10 @@ class TensorRankShower(QWidget):
 
         show_all_button.clicked.connect(toggle_expand)
 
-class XYZRangeSelector(QWidget):
+class XYZRangeSelector(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet('QFrame {border:1px solid;}')
 
         layout = QGridLayout(self)
 
@@ -143,12 +130,16 @@ class XYZRangeSelector(QWidget):
             end_box = QSpinBox(self)
             end_box.setToolTip("end at")
             layout.addWidget(end_box, 4, m)
+
+        rerender_button = QPushButton('Rerender')
+        layout.addWidget(rerender_button, 5, 3)
             
 class Window(QWidget):
     def __init__(self):
         super(Window, self).__init__()
         box = QBoxLayout(QBoxLayout.LeftToRight, self)
         self.resize(1200, 800)
+        self.setWindowTitle('Tensor Rank Visualization')
 
         def canvas_on_close_handler(_1, _2):
             self.close()
@@ -220,6 +211,10 @@ def add_scatter_one_by_one():
 
                 scatter.set_data(poss, face_color=(1, 0, 0, 0.5) if l == m and l == n else (1, 1, 1, 0.5), size=5)
                 _context.view.add(scatter)
+                #_context.view.update()
+    axis = scene.visuals.XYZAxis(parent=_context.view.scene)
+    axis.transform = transforms.MatrixTransform()
+    axis.transform.translate((-1, -1, -1))
 
 
 def add_cubes():
@@ -247,7 +242,7 @@ def add_cubes():
 if __name__ == '__main__':
     #add_scatter()
     add_scatter_one_by_one()
-    qt_app = QtWidgets.QApplication(sys.argv)
+    qt_app = QApplication(sys.argv)
     ex = Window()
     qt_app.exec_()
 
