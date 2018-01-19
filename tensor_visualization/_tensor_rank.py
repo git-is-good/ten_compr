@@ -9,6 +9,10 @@ class TensorData(object):
         self.partitions = (2, 2, 2)
         self.ranks = []
 
+    #TODO:
+    def rank(i, j, k):
+        return 100 if i == j and j == k else 0
+
     def setTensor(self, tensor):
         self.tensor = tensor
 

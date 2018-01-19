@@ -21,17 +21,69 @@ from PyQt5.QtCore import Qt
 import numpy as np
 import numpy.random as rd
 
-from ._tensor_rank import TensorData
+#from ._tensor_rank import TensorData
 
+# an observable
+class TensorData(object):
+    def __init__(self):
+        self.reset()
+        self.observers = []
 
-class ScatterRankShowerUnit(scene.visuals.Markers):
-    def __init__(self, rank, orig_size):
+    def reset(self):
+        self.tensor = None
+        self.partitions = (3, 3, 3)
+        self.ranks = []
+
+    #TODO:
+    # rank is a number in [0, 100]
+    def rank(self, i, j, k):
+        if self.tensor == 0:
+            return 100 if i == j and j == k else 0
+        elif self.tensor == 1:
+            return 100 if i == 1 else 50
+        else:
+            return 50 if i == 1 or j == 1 else 0
+
+    def sub_size(self, i, j, k):
+        return (7, 3, 5)
+
+    def setTensor(self, tensor):
+        self.tensor = tensor
+
+    def register(self, a_observer):
+        self.observers.append(a_observer)
+
+    # ValueError only if program error
+    def unregister(self, a_observer):
+        self.observers.remove(a_observer)
+
+    def update(self):
+        self._update_ranks()
+        for ob in self.observers:
+            ob.on_tensor_data_update(self)
+
+    def _update_ranks(self):
+        '''
+        for given tensor, partitions, compute all involed ranks
+        '''
         ...
 
+_tensor_data = TensorData()
 
-def get_shower_unit(rank, orig_size, rank_viewmode):
+class ScatterRankShowerUnit(scene.visuals.Markers):
+    def __init__(self, rank, which_pos, how_many_seg, to_scale):
+        super().__init__()
+        poss = np.random.random(size=(10000, 3)) if rank > 50 else np.random.random(size=(10, 3))
+        poss += which_pos
+        poss -= how_many_seg/2
+        poss *= to_scale
+
+        self.set_data(poss, face_color=(1, 0, 0, 0.5) if rank > 50 else (1, 1, 1, 0.5), size=5)
+
+
+def get_shower_unit(rank_viewmode, *args):
     if rank_viewmode == 'hybrid':
-        return ScatterRankShowerUnit(rank, orig_size)
+        return ScatterRankShowerUnit(*args)
     else:
         raise ValueError("{} not implemented".format(rank_viewmode))
 
@@ -73,21 +125,24 @@ class TensorDisplayContext(object):
     
     def on_tensor_data_update(self, tensor_data):
         self._clear_all_shower_units()
+        to_scale = 0.4
         for l in range(tensor_data.partitions[0]):
             for m in range(tensor_data.partitions[1]):
                 for n in range(tensor_data.partitions[2]):
                     shower_unit = get_shower_unit(
-                              tensor_data.rank(l, m, n)
-                            , (5, 5, 5)
-                            , self.rank_viewmode
+                              self.rank_viewmode
+                            , tensor_data.rank(l, m, n)
+                            , np.array((l, m, n))
+                            , np.array(tensor_data.partitions)
+                            , to_scale
                             )
                     self.shower_units.append(shower_unit)
                     self.view.add(shower_unit)
 
 
 class TensorRankViewSelector(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self):
+        super().__init__()
         self.setStyleSheet('QFrame {border:1px solid;}')
 
         layout = QHBoxLayout(self)
@@ -103,52 +158,72 @@ class TensorRankViewSelector(QFrame):
         layout.addWidget(self.hybrid)
 
 class TensorRankShower(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, tensor_data):
+        super().__init__()
+        tensor_data.register(self)
         self.setStyleSheet('QFrame {border:1px solid;}')
 
-        data_len_per_dim = 5
-        layout = QBoxLayout(QBoxLayout.TopToBottom, self)
+        self.layout = QBoxLayout(QBoxLayout.TopToBottom, self)
 
         label_container = QWidget(self)
-        layout.addWidget(label_container)
+        self.layout.addWidget(label_container)
         label_container_layout = QHBoxLayout(label_container)
         label = QLabel('Tensor Rank', self)
         label.setAlignment(Qt.AlignHCenter)
         label_container_layout.addWidget(label)
-        show_all_button = QPushButton('Expand/Collapse', self)
-        label_container_layout.addWidget(show_all_button)
+        self.show_all_button = QPushButton('Expand/Collapse', self)
+        label_container_layout.addWidget(self.show_all_button)
+        self.tw = None
+
+        def toggle_expand():
+            print (hex(id(self.tw)))
+            if not self.tw: return
+            self.tw.collapseAll() if self.is_expanded else self.tw.expandAll()
+            self.is_expanded = not self.is_expanded
+
+        self.show_all_button.clicked.connect(toggle_expand)
+        
+
+    def on_tensor_data_update(self, tensor_data):
+        #for x in range(self.tw.topLevelItemCount()):
+        #    pass
+        print ("on_tensor_data_update")
+        if self.tw: self.tw.deleteLater()
 
         tw = QTreeWidget(self)
-        layout.addWidget(tw)
+        self.layout.addWidget(tw)
         tw.setColumnCount(2)
         tw.setHeaderLabels(["where", "rank", "size"])
 
-        for x in range(data_len_per_dim):
+        for x in range(tensor_data.partitions[0]):
             x_child = QTreeWidgetItem(["x:{}".format(x)])
-            for y in range(data_len_per_dim):
+            #x_child.setText(0, "Hello")
+            for y in range(tensor_data.partitions[1]):
                 y_child = QTreeWidgetItem(["y:{}".format(y)])
-                for z in range(data_len_per_dim):
-                    z_child = QTreeWidgetItem(["z:{}".format(z), "({},{},{})".format(1, 1, 1), "{}x{}x{}".format(10, 10, 10)])
+                for z in range(tensor_data.partitions[2]):
+                    sub_x, sub_y, sub_z = tensor_data.sub_size(x, y, z)
+                    z_child = QTreeWidgetItem(["z:{}".format(z)
+                        , "{}".format(tensor_data.rank(x, y, z))
+                        , "{}x{}x{}".format(sub_x, sub_y, sub_z)
+                        ])
                     y_child.addChild(z_child)
                 x_child.addChild(y_child)
             tw.addTopLevelItem(x_child)
 
+        self.tw = tw
         self.is_expanded = False
-        def toggle_expand():
-            tw.collapseAll() if self.is_expanded else tw.expandAll()
-            self.is_expanded = not self.is_expanded
 
-        show_all_button.clicked.connect(toggle_expand)
 
 class XYZRangeSelector(QFrame):
-    def __init__(self, parent=None):
+    def __init__(self, tensor_data, parent=None):
         super().__init__(parent)
         self.setStyleSheet('QFrame {border:1px solid;}')
+        tensor_data.register(self)
 
         layout = QGridLayout(self)
 
         modes = ['X', 'Y', 'Z']
+        self.how_many_partition_box = {}
         for m in range(1, 4):
             mode = modes[m - 1]
 
@@ -156,9 +231,9 @@ class XYZRangeSelector(QFrame):
             label.setAlignment(Qt.AlignHCenter)
             layout.addWidget(label, 1, m)
 
-            how_many_partition_box = QSpinBox(self)
-            how_many_partition_box.setToolTip("how many partition?")
-            layout.addWidget(how_many_partition_box, 2, m)
+            self.how_many_partition_box[mode] = QSpinBox(self)
+            self.how_many_partition_box[mode].setToolTip("how many partition?")
+            layout.addWidget(self.how_many_partition_box[mode], 2, m)
         
             start_box = QSpinBox(self)
             start_box.setToolTip("start from")
@@ -169,7 +244,24 @@ class XYZRangeSelector(QFrame):
             layout.addWidget(end_box, 4, m)
 
         rerender_button = QPushButton('Rerender')
+        rerender_button.clicked.connect(self.on_rerender_demand)
         layout.addWidget(rerender_button, 5, 3)
+        self.layout = layout
+
+    def on_tensor_data_update(self, tensor_data):
+        layout = self.layout
+        for i in range(1, 4):
+            layout.itemAtPosition(2, i).widget().setValue(tensor_data.partitions[i-1])
+
+            layout.itemAtPosition(3, i).widget().setValue(0)
+            layout.itemAtPosition(4, i).widget().setValue(tensor_data.partitions[i-1] - 1)
+
+
+    def on_rerender_demand(self):
+        #TODO: pretend to collect data, and inform _tensor_data
+        _tensor_data.partitions = [int(box.value()) for box in self.how_many_partition_box.values()]
+        _tensor_data.setTensor(0)
+        _tensor_data.update()
             
 class Window(QWidget):
     def __init__(self):
@@ -177,10 +269,12 @@ class Window(QWidget):
         box = QBoxLayout(QBoxLayout.LeftToRight, self)
         self.resize(1200, 800)
 
+        tensor_display_context = TensorDisplayContext(_tensor_data)
+
         def canvas_on_close_handler(_1, _2):
             self.close()
-        _context.canvas.set_on_close_handler(canvas_on_close_handler)
-        box.addWidget(_context.canvas.native)
+        tensor_display_context.canvas.set_on_close_handler(canvas_on_close_handler)
+        box.addWidget(tensor_display_context.canvas.native)
         
         rightBoxWidget = QWidget()
         rightBox = QBoxLayout(QBoxLayout.TopToBottom, rightBoxWidget)
@@ -190,10 +284,10 @@ class Window(QWidget):
         tensor_view_selector = TensorRankViewSelector()
         rightBox.addWidget(tensor_view_selector)
 
-        xyzRangeSelector = XYZRangeSelector()
+        xyzRangeSelector = XYZRangeSelector(_tensor_data)
         rightBox.addWidget(xyzRangeSelector)
 
-        tw_container = TensorRankShower()
+        tw_container = TensorRankShower(_tensor_data)
         rightBox.addWidget(tw_container)
 
         self.show()
@@ -202,19 +296,17 @@ class Window(QWidget):
         if event.key() == Qt.Key_Escape:
             self.close()
 
-class Context(object):
-    def __init__(self):
-        self.qt_app = QApplication([])
-        self.tensor_data = TansorData()
-        self.win = Window()
-        
 
-_context = Context()
+_qt_app = QApplication([])
+_win = Window()
 
 
 def visualize(tensor):
-    _context.tensor_data.reset()
-    _context.tensor_data.setTensor(tensor)
-    _context.tensor_data.update()
+    _tensor_data.reset()
+    _tensor_data.setTensor(tensor)
+    _tensor_data.update()
 
-    _context.qt_app.exce_()
+    _qt_app.exec_()
+
+if __name__ == '__main__':
+    visualize(1)

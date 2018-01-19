@@ -7,7 +7,7 @@ from vispy.visuals import transforms
 from PyQt5 import QtCore
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QPushButton, QLabel, QRadioButton, QSpinBox
+from PyQt5.QtWidgets import QPushButton, QLabel, QRadioButton, QSpinBox, QMessageBox
 from PyQt5.QtWidgets import QTreeWidgetItem, QTreeWidget
 from PyQt5.QtWidgets import QWidget, QFrame
 from PyQt5.QtWidgets import QBoxLayout, QHBoxLayout, QGridLayout
@@ -56,14 +56,72 @@ class TensorRankViewSelector(QFrame):
         #self.setLayout(layout)
 
         self.point_cloud = QRadioButton('Point Cloud')
+        self.point_cloud.toggled.connect(self.point_cloud_handler)
         layout.addWidget(self.point_cloud)
 
         self.pure_color = QRadioButton('Pure Color')
+        self.pure_color.toggled.connect(self.pure_color_handler)
         layout.addWidget(self.pure_color)
 
         self.hybrid = QRadioButton('Hybrid')
         self.hybrid.setChecked(True)
         layout.addWidget(self.hybrid)
+
+        self.inner_hybrid_handler = None 
+        self.inner_pure_color_handler = None 
+        self.inner_point_cloud_handler = None
+
+        self.hybrid.toggled.connect(self.hybrid_handler)
+        self.current_view = "hybrid"
+
+        self.observers = []
+
+    def register(self, a_observer):
+        self.observers.append(a_observer)
+
+    def unregister(self, a_observer):
+        self.observers.remove(a_observer)
+
+    def update(self):
+        for ob in self.observers:
+            ob.on_tensor_rank_view_change(self.current_view)
+
+    def hybrid_handler(self, enabled):
+        if not enabled: return
+        
+        if not self.inner_hybrid_handler:
+            QMessageBox.information(None, "Changement de Mode", "Bonjour!")
+        else:
+            self.inner_hybrid_handler()
+            self.update()
+
+    def point_cloud_handler(self, enabled):
+        if not enabled: return
+
+        if not self.inner_point_cloud_handler:
+            QMessageBox.warning(None, "Changement de Mode", "Bonjour Nuage des Points")
+        else:
+            self.inner_point_cloud_handler()
+            self.update()
+
+    def pure_color_handler(self, enabled):
+        if not enabled: return
+
+        if not self.inner_pure_color_handler:
+            QMessageBox.critical(None, "Changement de Mode", "Bonjour Couleur")
+        else:
+            self.inner_pure_color_handler()
+            self.update()
+
+    def add_switch_to_point_cloud(self, handler):
+        self.inner_point_cloud_handler = handler
+
+    def add_switch_to_pure_color(self, handler):
+        self.inner_pure_color_handler = handler
+
+    def add_switch_to_hybrid(self, handler):
+        self.inner_hybrid_handler = handler
+
 
 class TensorRankShower(QFrame):
     def __init__(self, parent=None):
@@ -103,6 +161,9 @@ class TensorRankShower(QFrame):
             self.is_expanded = not self.is_expanded
 
         show_all_button.clicked.connect(toggle_expand)
+
+    def on_tensor_rank_view_change(self, new_view):
+        ...
 
 class XYZRangeSelector(QFrame):
     def __init__(self, parent=None):
@@ -154,10 +215,6 @@ class Window(QWidget):
         tensor_view_selector = TensorRankViewSelector()
         rightBox.addWidget(tensor_view_selector)
 
-        #button = QPushButton('Change View', self)
-        #button.setToolTip('Change View Port')
-        #rightBox.addWidget(button)
-
         xyzRangeSelector = XYZRangeSelector()
         rightBox.addWidget(xyzRangeSelector)
 
@@ -198,11 +255,11 @@ def add_scatter():
     _context.view.add(scatter)
 
 def add_scatter_one_by_one():
-    how_many_seg = 5
+    how_many_seg = np.array((5, 5, 5))
     to_scale = 0.4
-    for l in range(how_many_seg):
-        for m in range(how_many_seg):
-            for n in range(how_many_seg):
+    for l in range(how_many_seg[0]):
+        for m in range(how_many_seg[1]):
+            for n in range(how_many_seg[2]):
                 scatter = scene.visuals.Markers()
                 poss = np.random.random(size=(10000, 3)) if l == m and l == n else np.random.random(size=(10, 3))
                 poss += (l, m, n)
