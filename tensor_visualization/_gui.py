@@ -11,7 +11,7 @@ from vispy.visuals import transforms
 from PyQt5 import QtCore
 
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtWidgets import QPushButton, QLabel, QRadioButton, QSpinBox
+from PyQt5.QtWidgets import QPushButton, QLabel, QRadioButton, QSpinBox, QShortcut
 from PyQt5.QtWidgets import QTreeWidgetItem, QTreeWidget
 from PyQt5.QtWidgets import QWidget, QFrame
 from PyQt5.QtWidgets import QBoxLayout, QHBoxLayout, QGridLayout
@@ -33,6 +33,7 @@ class TensorData(object):
         self.tensor = None
         self.partitions = (3, 3, 3)
         self.ranks = []
+        self.rank_viewmode = "hybrid"
 
     #TODO:
     # rank is a number in [0, 100]
@@ -70,23 +71,47 @@ class TensorData(object):
 
 _tensor_data = TensorData()
 
-class ScatterRankShowerUnit(scene.visuals.Markers):
+class HybridShowerUnit(scene.visuals.Markers):
     def __init__(self, rank, which_pos, how_many_seg, to_scale):
         super().__init__()
         poss = np.random.random(size=(10000, 3)) if rank > 50 else np.random.random(size=(10, 3))
         poss += which_pos
-        poss -= how_many_seg/2
+        poss -= how_many_seg//2
         poss *= to_scale
 
         self.set_data(poss, face_color=(1, 0, 0, 0.5) if rank > 50 else (1, 1, 1, 0.5), size=5)
 
+class PointCloudShowerUnit(scene.visuals.Markers):
+    def __init__(self, rank, which_pos, how_many_seg, to_scale):
+        super().__init__()
+        poss = np.random.random(size=(10000, 3)) if rank > 50 else np.random.random(size=(10, 3))
+        poss += which_pos
+        poss -= how_many_seg//2
+        poss *= to_scale
+
+        self.set_data(poss, size=5)
+
+class PureColorShowerUnit(scene.visuals.Sphere):
+    def __init__(self, rank, which_pos, how_many_seg, to_scale):
+        super().__init__(radius=0.075
+                , method='latitude'
+                , color=(1, 0, 0, 0.5) if rank > 50 else (1, 1, 1, 0.5)
+                )
+        self.transform = transforms.MatrixTransform()
+        self.transform.translate( to_scale * (which_pos - how_many_seg//2))
+
 
 def get_shower_unit(rank_viewmode, *args):
-    if rank_viewmode == 'hybrid':
-        return ScatterRankShowerUnit(*args)
-    else:
+    storage = {
+            'hybrid': HybridShowerUnit,
+            'point_cloud': PointCloudShowerUnit,
+            'pure_color': PureColorShowerUnit,
+            }
+    try:
+        return storage[rank_viewmode](*args)
+    except KeyError:
         raise ValueError("{} not implemented".format(rank_viewmode))
-
+        
 class CostumizedCanvas(scene.SceneCanvas):
     def __init__(self, *args, **kv):
         super().__init__(*args, **kv)
@@ -116,7 +141,6 @@ class TensorDisplayContext(object):
         self.axis.transform.translate((-1, -1, -1))
         self.shower_units = []
 
-        self.rank_viewmode = "hybrid"
 
     def _clear_all_shower_units(self):
         for unit in self.shower_units:
@@ -130,7 +154,7 @@ class TensorDisplayContext(object):
             for m in range(tensor_data.partitions[1]):
                 for n in range(tensor_data.partitions[2]):
                     shower_unit = get_shower_unit(
-                              self.rank_viewmode
+                              tensor_data.rank_viewmode
                             , tensor_data.rank(l, m, n)
                             , np.array((l, m, n))
                             , np.array(tensor_data.partitions)
@@ -138,6 +162,31 @@ class TensorDisplayContext(object):
                             )
                     self.shower_units.append(shower_unit)
                     self.view.add(shower_unit)
+
+def g_keypress_manager(e):
+    global _win
+    if e.key() == Qt.Key_Escape:
+        _win.close()
+
+
+class EnhancedRadioButton(QRadioButton):
+    def __init__(self, *args, **kv):
+        super().__init__(*args, **kv)
+        self.left = None 
+        self.right = None
+        self.setFocusPolicy(Qt.ClickFocus)
+        
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Left and self.left:
+            self.setChecked(False)
+            self.left.setChecked(True)
+            self.left.setFocus(True)
+        elif e.key() == Qt.Key_Right and self.right:
+            self.setChecked(False)
+            self.right.setChecked(True)
+            self.right.setFocus(True)
+        else:
+            g_keypress_manager(e)
 
 
 class TensorRankViewSelector(QFrame):
@@ -147,15 +196,46 @@ class TensorRankViewSelector(QFrame):
 
         layout = QHBoxLayout(self)
 
-        self.point_cloud = QRadioButton('Point Cloud')
-        layout.addWidget(self.point_cloud)
+        #point_cloud = QRadioButton('Point Cloud')
+        point_cloud = EnhancedRadioButton('Point Cloud')
+        point_cloud.toggled.connect(self.point_cloud_clicked_handler)
+        layout.addWidget(point_cloud)
 
-        self.pure_color = QRadioButton('Pure Color')
-        layout.addWidget(self.pure_color)
+        #pure_color = QRadioButton('Pure Color')
+        pure_color = EnhancedRadioButton('Pure Color')
+        pure_color.toggled.connect(self.pure_color_clicked_handler)
+        layout.addWidget(pure_color)
 
-        self.hybrid = QRadioButton('Hybrid')
-        self.hybrid.setChecked(True)
-        layout.addWidget(self.hybrid)
+        #hybrid = QRadioButton('Hybrid')
+        hybrid = EnhancedRadioButton('Hybrid')
+        hybrid.toggled.connect(self.hybrid_clicked_handler)
+        hybrid.setChecked(True)
+        layout.addWidget(hybrid)
+
+        all_choices = [point_cloud, pure_color, hybrid]
+        for i in range(len(all_choices)):
+            all_choices[i].left = all_choices[i-1] if i != 0 else all_choices[-1]
+            all_choices[i].right = all_choices[i+1] if i + 1 != len(all_choices) else all_choices[0]
+    
+    def keyPressEvent(self, e):
+        #if event.key() == Qt.Key_Left:# and self.left:
+        print("OK")
+
+    def hybrid_clicked_handler(self, enabled):
+        if not enabled: return 
+        _tensor_data.rank_viewmode = "hybrid"
+        _tensor_data.update()
+
+    def point_cloud_clicked_handler(self, enabled):
+        if not enabled: return 
+        _tensor_data.rank_viewmode = "point_cloud"
+        _tensor_data.update()
+
+    def pure_color_clicked_handler(self, enabled):
+        if not enabled: return 
+        _tensor_data.rank_viewmode = "pure_color"
+        _tensor_data.update()
+
 
 class TensorRankShower(QFrame):
     def __init__(self, tensor_data):
@@ -176,7 +256,6 @@ class TensorRankShower(QFrame):
         self.tw = None
 
         def toggle_expand():
-            print (hex(id(self.tw)))
             if not self.tw: return
             self.tw.collapseAll() if self.is_expanded else self.tw.expandAll()
             self.is_expanded = not self.is_expanded
@@ -187,7 +266,6 @@ class TensorRankShower(QFrame):
     def on_tensor_data_update(self, tensor_data):
         #for x in range(self.tw.topLevelItemCount()):
         #    pass
-        print ("on_tensor_data_update")
         if self.tw: self.tw.deleteLater()
 
         tw = QTreeWidget(self)
@@ -290,11 +368,15 @@ class Window(QWidget):
         tw_container = TensorRankShower(_tensor_data)
         rightBox.addWidget(tw_container)
 
+#        esc_shortcut = QShortcut(self)
+#        esc_shortcut.activated.connect(self.close)
+        
         self.show()
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self.close()
+        g_keypress_manager(event)
+#        if event.key() == Qt.Key_Escape:
+#            self.close()
 
 
 _qt_app = QApplication([])
