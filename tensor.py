@@ -318,7 +318,17 @@ def main():
 
     #d = np.random.uniform(size=(50,50,50))
     #best_ks_without_divide(d)
-    test()
+
+    #test()
+
+    ts = np.load("sample.data.npy")
+    fin = 19
+    for i in range(2, fin+1):
+        ts += np.load("sample{}.data.npy".format(i))
+
+    best_storage3(ts)
+    print ("forb norm squared:{}".format( np.linalg.norm(np.ravel(ts)) ** 2 ))
+    
    
 
 if __name__ == '__main__':

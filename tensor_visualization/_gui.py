@@ -132,6 +132,7 @@ class TensorDisplayContext(object):
         self.canvas = CostumizedCanvas(keys='interactive')
         self.view = self.canvas.central_widget.add_view()
         self.view.camera = 'turntable'
+        #self.view.camera = 'fly'
         self.canvas.central_widget.remove_widget(self.view)
         self.canvas.central_widget.add_widget(self.view)
         tensor_data.register(self)
